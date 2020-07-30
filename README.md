@@ -1,1 +1,1 @@
-# Brownian-motion
+# Arma-and-Garch
