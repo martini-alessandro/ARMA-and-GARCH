@@ -1,89 +1,112 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Fri Aug 14 17:27:02 2020
+Created on Fri Jan  8 11:26:25 2021
 
-@author: Workplace
+Class that simulates a GARCH(p,q) process, and use it su estimate and forecast
+volatility for stocks data 
 """
-import numpy as np
-import sphinx
+import numpy as np 
 
 class GARCH(object): 
-    """Create a GARCH object that simulates a GARCH(p, q) process with 
-        increments extracted from a given distribution, default is normal 
-        distribution. 
-        GARCH model is given by 
-        .. math::
-        \\sigma^2_t = mean + \sum_i \alphas_i x^2(t-1) + \sum_i \beta_i sigma^2(t-1)
-        p and q parameters have to be numpy arrays""" 
-        
-    def __init__(self, variance, mean, alphas, betas, distribution = 'normal'): 
-        
-        self.variance = np.array([variance])
-        self.mean = mean
-        self.distribution = distribution
-        self.returns = self._extractReturn()
-        self.alphas = alphas 
-        self.betas = betas
-        
-    def _extractReturn(self, variance = None): 
-        """Initialize the first value of returns for GARCH models with 
-        given distribution. If no value is passed, compute the extraction 
-        using the current value of conditional variance""" 
-        #Compute with current variance value if no value inserted
-        if variance == None:
-            v = self.variance[-1]
-            
-        #Compute with inserted value for the variance
-        elif type(variance) == int or type(variance) == float: 
-            v = variance
-        
-        #Raise Error in other cases
-        else:
-            raise ValueError('Variance parameter has to be None, int or float')
-        
-        #Extract from normal distribution 
-        if self.distribution.lower() == 'normal':
-                return np.array([np.sqrt(v) * np.random.normal(0, 1)])
-        else:
-            raise ValueError('Chosen distribution is not available')
-            
     
-    def simulate(self, size = 1000): 
-        """Simulate a GARCH process of a given length"""
+    def __init__(self, omega: float, alphas: np.ndarray, betas: np.ndarray, conditional_distribution):
+        """Initiate GARcH(p, q) class, with p the lengths of the alpha 
+        coefficients and q the legth of the beta coefficients. 
+        Conditional distribution is the distribution of the random, independent
+        increments, it generally has 0 mean
+        """ 
+        self._raiseInitError(omega, alphas, betas, conditional_distribution)
+        self.alphas = alphas 
+        self.betas = betas 
+        self.omega = omega
+        self.conditionalDistribution = conditional_distribution
+        self.variance = self._unconditionalVariance(omega, alphas, betas)
         
-        #simulate untill datas and parameters have same length. Do not rec datas
-            #Initialize variables
-        rets = self.returns[::-1]
-        var = self.variance[::-1]
         
-            #Main Loop 
-        while rets.size < self.alphas.size or var.size < self.betas.size:
-            #Correct length to perform scalar product
-            p, q = len(rets), len(var)
-            #Update conditional variance and returns 
-            newVariance = self.mean + self.alphas[: p] @ (rets ** 2) \
-                + self.betas[:q] @ var
-            newRet = self._extractReturn(variance = float(newVariance))
-            #record values 
-            var = np.insert(var, 0, newVariance)
-            rets = np.insert(rets, 0, newRet)
-            print(var, rets)
-        
-        for i in range(2 * size): 
-            #Try to implement recursively
-            p, q = self.alphas.size, self.betas.size
-            #Update conditional variance and returns
-            newVariance = self.mean + self.alphas @ (rets ** 2)[ : p] \
-                + self.betas @ var[ : q]
-            newRet = self._extractReturn(variance = float(newVariance))
-            #Store values
-            var = np.insert(var, 0, newVariance)
-            rets = np.insert(rets, 0, newRet)
-            #Update attributes
-            self.returns = rets[ : size][::-1]
-            self.variance = var[ : size][::-1]
-            
-        return self.returns, self.variance
-            
+    def simulate(self, length = 253, mean = 0): 
+        return self._generateSimulation(length, mean)
 
+    
+    
+    
+    def _sample(self, mean, variance, size = 1, distribution = 'normal'): 
+        """ Samples conditional distribution"""
+        return np.random.normal(0, np.sqrt(variance), size = size)
+    
+    
+    
+    def _addNewElements(self, returns, volatilities, p, q, mean):
+        """This generate new returns and volatility and return the updated 
+        lists, from length N to length N + 1""" 
+        #Update Variables 
+        new_vol = self.omega\
+                 + self.alphas[::-1][-p : ] @ np.array(returns)[-p : ] ** 2\
+                 +  self.betas[::-1][-q : ] @ np.array(volatilities)[-q : ]
+        new_rets = np.random.normal(mean, np.sqrt(new_vol))
         
+        #Update Arrays 
+        returns.append(new_rets)
+        volatilities.append(new_vol)
+        return returns, volatilities    
+    
+    
+    def _generateSimulation(self, length, mean): 
+        """Generate the simulation of GARCH(p,q) process after the Burn In 
+        initial values. 10% more of returns are generated in order to make
+        the result stable""" 
+        
+        p, q = len(self.alphas), len(self.betas)
+        returns, volatilities = self._generateBurnIn(mean) 
+        
+        for _ in range(int(1.1 * length)):
+            returns, volatilities = self._addNewElements(returns, volatilities,
+                                                         p, q, mean)
+            
+        return np.array(returns)[-length : ], np.array(volatilities)[- length : ]
+        
+        
+    def _generateBurnIn(self, mean):
+       """
+       Generate p = len(alphas) returns and q = len(betas) variances to initialize
+       GARCH simulation, in order to have max(p, q) returns and values for variance 
+       """       
+       #Initialize variables 
+       p, q = len(self.alphas), len(self.betas)
+       volatilities = [self.variance]
+       returns = [np.random.normal(mean, np.sqrt(self.variance))]
+       
+       #Generate new returns and volatilities since we have enough elements
+       while len(returns) < max(p,q): 
+           _p, _q = min(len(returns), p), min(len(volatilities), q)
+           returns, volatilities = self._addNewElements(returns, volatilities, 
+                                                        _p, _q, mean) 
+       return returns, volatilities
+   
+   
+    
+    def _unconditionalVariance(self, omega, alphas, betas): 
+        "Computes the asymptotic variance of the model"
+        return omega / (1 - (alphas.sum() + betas.sum()))
+        
+    
+    def _raiseInitError(self, omega, alphas, betas, conditional_distribution): 
+        """
+        Raises error if init variables are ill defined  
+
+        """
+        #List containing all the possible conditional distribution for returns
+        availableDistributions = ['normal']
+        
+        #Raise Error in case of type error or not available conditional distribution
+        if type(omega) != float and type(omega) != int:
+            raise TypeError('Omega has to be float or int')
+            
+        if type(alphas) != np.ndarray or type(betas) != np.ndarray: 
+            raise TypeError('Type of alphas and betas coefficients must be np.ndarray')
+        
+        if conditional_distribution.lower() not in availableDistributions: 
+            raise ValueError('Conditional distirbution not available. The \
+                             available conditional distributions are:\n{}'
+                             .format('; '.join(availableDistributions)))
+        return None
